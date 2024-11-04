@@ -264,7 +264,7 @@ void padthink_free(t_padthink *x) {
 void padthink_turn_on(t_padthink *x, t_floatarg f) {
   if (f == 1) {
     start_poll(x, NULL);
-  } else {
+  } else if (f == 0) {
     stop_poll(x);
   }
 }
