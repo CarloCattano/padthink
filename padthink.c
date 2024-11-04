@@ -19,9 +19,6 @@
   #include <unistd.h>
 #endif
 
-// TODO
-//  - Change polling to internal (no external polling)
-
 #define THINKPAD
 // needs chmod to read permission on *device file
 // sudo chmod 444 /dev/input/by-path/platform-i8042-serio-1-event-mouse
@@ -43,31 +40,31 @@ char *device;
 
 typedef struct _padthink {
   
-  t_object      x_obj;
-  t_int         open_fds[2];
-  t_int         nipple_fd;
-  t_int         touchpad_fd;
+  t_object    x_obj;
 
-  t_int         polling;
-  t_int         poll_interval;
-  t_int         n_ret;
-  t_int         t_ret;
+  t_int       open_fds[2];
+  t_int       nipple_fd;
+  t_int       touchpad_fd;
+
+  t_int       polling;
+  t_int       poll_interval;
+  t_int       n_ret;
+  t_int       t_ret;
   
-  t_atom        nip_xy[2];
-  t_atom        a_bt[4];
-  t_atom        touchpad_xy[2];
+  pthread_t   thread_id;
 
-  t_outlet      *out_nipple;
-  t_outlet      *out_buttons;
-  t_outlet      *out_touchpad;
+  t_atom      nip_xy[2];
+  t_atom      a_bt[4];
+  t_atom      touchpad_xy[2];
 
-}               t_padthink;
+  t_outlet    *out_nipple;
+  t_outlet    *out_buttons;
+  t_outlet    *out_touchpad;
+
+}             t_padthink;
 
 
-// abstracted read nipple and touchpad functionality
-// - read nipple and touchpad events
-// - store it in tpad_ev and tpoint_ev to be read by padthink_bang
-//
+// read fd's from touchpad and trackpoint
 void padthink_read(t_padthink *x) {
   x->n_ret = read(x->nipple_fd, &tpoint_ev, sizeof(struct input_event));
   if (x->n_ret != sizeof(struct input_event)) x->n_ret = -1;
@@ -77,9 +74,8 @@ void padthink_read(t_padthink *x) {
   if (x->t_ret != sizeof(struct input_event)) x->t_ret = -1;
 }
 
-void padthink_bang(t_padthink *x) {
 
-  // padthink_read(x);
+void padthink_process(t_padthink *x) {
 
   if (x->n_ret == -1 && x->t_ret == -1) {
     return;
@@ -133,16 +129,39 @@ void padthink_bang(t_padthink *x) {
 static void init_atoms(t_padthink *x) {
   SETFLOAT(&x->nip_xy[0], 0);
   SETFLOAT(&x->nip_xy[1], 0);
+  
   SETFLOAT(&x->a_bt[0], 0);
   SETFLOAT(&x->a_bt[1], 0);
   SETFLOAT(&x->a_bt[2], 0);
   SETFLOAT(&x->a_bt[3], 0);
+
   SETFLOAT(&x->touchpad_xy[0], 0);
   SETFLOAT(&x->touchpad_xy[1], 0);
 }
 
 
-void set_device(t_padthink *x, t_symbol *s) {
+void set_touchpad_device(t_padthink *x, t_symbol *s) {
+
+  close(x->open_fds[1]);
+
+  x->touchpad_fd = open(s->s_name, O_RDONLY | O_NONBLOCK);
+
+  if (x->touchpad_fd == -1) {
+    post("Error: Cannot open given device");
+    post("Using default device");
+
+    x->touchpad_fd = open(DEF_TOUCHPAD, O_RDONLY | O_NONBLOCK);
+    if (x->touchpad_fd == -1) {
+      post("Error: Cannot open default device");
+      return;
+    }
+    x->open_fds[1] = x->touchpad_fd;
+  }
+
+  x->open_fds[1] = x->touchpad_fd;
+  return;
+}
+void set_trackpoint_device(t_padthink *x, t_symbol *s) {
 
   post("set_device: %s", s->s_name);
   close(x->open_fds[0]);
@@ -173,7 +192,9 @@ void *padthink_new(void) {
   x->touchpad_fd = open(DEF_TOUCHPAD, O_RDONLY | O_NONBLOCK);
 
   x->polling = 1;
-  x->poll_interval = 10000; // 10ms
+  x->poll_interval = 1000; // 1ms
+
+  x->thread_id = 0;
 
   x->open_fds[0] = -1;
   x->open_fds[1] = -1;
@@ -197,8 +218,8 @@ void *padthink_new(void) {
   x->out_buttons = outlet_new(&x->x_obj, &s_list);
   x->out_touchpad = outlet_new(&x->x_obj, &s_list);
 
-  inlet_new(&x->x_obj, &x->x_obj.ob_pd, &s_symbol, &s_symbol);
-  inlet_new(&x->x_obj, &x->x_obj.ob_pd, &s_float, &s_float);
+  // inlet_new(&x->x_obj, &x->x_obj.ob_pd, &s_symbol, &s_symbol);
+  // inlet_new(&x->x_obj, &x->x_obj.ob_pd, &s_float, &s_float);
 
   return (void *)x;
 }
@@ -208,17 +229,17 @@ void *polling_thread(void *arg) {
   t_padthink *x = (t_padthink *)arg;
   while (x->polling) {
     padthink_read(x);
-    padthink_bang(x);
-    usleep(x->poll_interval); // Sleep for 10ms to prevent high CPU usage
+    padthink_process(x);
+    usleep(x->poll_interval); 
   }
-  return NULL;
+  
+  pthread_exit(NULL);
 }
 
 void start_poll(t_padthink *x, t_symbol *s) {
   x->polling = 1;
-  pthread_t thread_id;
-  pthread_create(&thread_id, NULL, polling_thread, (void *)x);
-  pthread_detach(thread_id);
+  pthread_create(&x->thread_id, NULL, polling_thread, (void *)x);
+  pthread_detach(x->thread_id); 
 }
 
 void set_poll_sleep(t_padthink *x, t_floatarg f) {
@@ -227,6 +248,8 @@ void set_poll_sleep(t_padthink *x, t_floatarg f) {
 
 void stop_poll(t_padthink *x) {
   x->polling = 0;
+  // join the thread
+  pthread_join(x->thread_id, NULL);
 }
 
 void padthink_free(t_padthink *x) {
@@ -234,13 +257,17 @@ void padthink_free(t_padthink *x) {
     close(x->open_fds[0]);
   if (x->open_fds[1] != -1)
     close(x->open_fds[1]);
+
+  if (x->polling) {
+    stop_poll(x);
+  }
 }
 
-void padthink_turnon(t_padthink *x, t_floatarg f) {
+void padthink_turn_on(t_padthink *x, t_floatarg f) {
   if (f == 1) {
     start_poll(x, NULL);
   } else {
-    x->polling = 0;
+    stop_poll(x);
   }
 }
 
@@ -248,10 +275,10 @@ void padthink_setup(void) {
   padthink_class = class_new(gensym("padthink"), (t_newmethod)padthink_new, (t_method)padthink_free,
                              sizeof(t_padthink), CLASS_DEFAULT, 0);
 
-  // add method for float input
-  class_addfloat(padthink_class, (t_method)padthink_turnon);
+  class_addfloat(padthink_class, (t_method)padthink_turn_on);
 
-  class_addmethod(padthink_class, (t_method)set_device, gensym("set"), A_DEFSYM,0);
+  class_addmethod(padthink_class, (t_method)set_touchpad_device, gensym("touchpad"), A_DEFSYM,0);
+  class_addmethod(padthink_class, (t_method)set_trackpoint_device, gensym("trackpoint"), A_DEFSYM,0);
   class_addmethod(padthink_class, (t_method)start_poll, gensym("start"), A_DEFSYM, 0);
   class_addmethod(padthink_class, (t_method)set_poll_sleep, gensym("poll"), A_DEFFLOAT, 0);
   class_addmethod(padthink_class, (t_method)stop_poll, gensym("stop"), 0);
