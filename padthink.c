@@ -73,7 +73,7 @@ void padthink_bang(t_padthink *x) {
 
   if (t_ret != -1) {
     if (tpad_ev.code == 57 && tpad_ev.type == 3) { // touch event with counter
-      post("Touchpad Y: %d", tpad_ev.value);
+      // post("Touchpad Y: %d", tpad_ev.value);
     } else if (tpad_ev.code == 54 && tpad_ev.type == 3) {
       SETFLOAT(&x->touchpad_xy[0], tpad_ev.value);
     } else if (tpad_ev.code == 53 && tpad_ev.type == 3){

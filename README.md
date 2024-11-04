@@ -1,5 +1,5 @@
 ## Thinkpad pure data
-Use the trackpoint data and trackpad xy and buttons in pd
+Use the track-point data (.) , track-pad xy and buttons in pd
 
 Only tested on linux Thinkpad P14s gen 3
 
