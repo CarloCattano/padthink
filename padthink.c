@@ -248,8 +248,6 @@ void set_poll_sleep(t_padthink *x, t_floatarg f) {
 
 void stop_poll(t_padthink *x) {
   x->polling = 0;
-  // join the thread
-  pthread_join(x->thread_id, NULL);
 }
 
 void padthink_free(t_padthink *x) {
@@ -258,7 +256,7 @@ void padthink_free(t_padthink *x) {
   if (x->open_fds[1] != -1)
     close(x->open_fds[1]);
 
-  if (x->polling) {
+  if (x->polling == 1) {
     stop_poll(x);
   }
 }
