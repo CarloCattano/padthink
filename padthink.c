@@ -46,6 +46,11 @@ typedef struct _padthink {
   t_int         nipple_fd;
   t_int         touchpad_fd;
 
+  t_int         polling;
+
+  t_int         n_ret;
+  t_int         t_ret;
+  
   t_atom        nip_xy[2];
   t_atom        a_bt[3];
   t_atom        touchpad_xy[2];
@@ -57,31 +62,39 @@ typedef struct _padthink {
 }               t_padthink;
 
 
+// abstracted read nipple and touchpad functionality
+// - read nipple and touchpad events
+// - store it in tpad_ev and tpoint_ev to be read by padthink_bang
+//
+void padthink_read(t_padthink *x) {
+  x->n_ret = read(x->nipple_fd, &tpoint_ev, sizeof(struct input_event));
+  if (x->n_ret != sizeof(struct input_event)) x->n_ret = -1;
+
+
+  x->t_ret = read(x->touchpad_fd, &tpad_ev, sizeof(struct input_event));
+  if (x->t_ret != sizeof(struct input_event)) x->t_ret = -1;
+}
+
 void padthink_bang(t_padthink *x) {
 
-  int n_ret = read(x->nipple_fd, &tpoint_ev, sizeof(struct input_event));
-  if (n_ret != sizeof(struct input_event)) 
-    n_ret = -1;
+  padthink_read(x);
 
-  int t_ret = read(x->touchpad_fd, &tpad_ev, sizeof(struct input_event));
-  if (t_ret != sizeof(struct input_event)) 
-    t_ret = -1;
-  
-  if (n_ret == -1 && t_ret == -1) 
+  if (x->n_ret == -1 && x->t_ret == -1) {
     return;
-  
+  }
 
-  if (t_ret != -1) {
-    if (tpad_ev.code == 57 && tpad_ev.type == 3) { // touch event with counter
-      // post("Touchpad Y: %d", tpad_ev.value);
-    } else if (tpad_ev.code == 54 && tpad_ev.type == 3) {
+  if (x->t_ret != -1) {
+    if (tpad_ev.code == 54 && tpad_ev.type == 3) {
       SETFLOAT(&x->touchpad_xy[0], tpad_ev.value);
     } else if (tpad_ev.code == 53 && tpad_ev.type == 3){
       SETFLOAT(&x->touchpad_xy[1], tpad_ev.value);
-    }
+    } else if (tpad_ev.code == 0x110 && tpad_ev.type == 0x01) {
+      post("padtouch: Touchpad press %d", tpad_ev.value);
+    } 
+    // post("Tp : %d %d %d", tpad_ev.type, tpad_ev.code, tpad_ev.value);
   }
 
-  if(n_ret){
+  if(x->n_ret){
     // EV_REL - trackpoint relative movement
     if (tpoint_ev.type == EV_REL) {
       if (tpoint_ev.code == 1) {
@@ -153,6 +166,8 @@ void *padthink_new(void) {
   x->nipple_fd = open(DEFAULT_DEVICE, O_RDONLY | O_NONBLOCK);
   x->touchpad_fd = open(DEF_TOUCHPAD, O_RDONLY | O_NONBLOCK);
 
+  x->polling = 1;
+
   x->open_fds[0] = -1;
   x->open_fds[1] = -1;
 
@@ -181,6 +196,20 @@ void *padthink_new(void) {
   return (void *)x;
 }
 
+void start_poll(t_padthink *x, t_symbol *s) {
+  post("start_poll");
+  x->polling = 1;
+  // while (x->polling){
+  //   padthink_read(x);
+  //   padthink_bang(x);
+  // }
+}
+
+void stop_poll(t_padthink *x) {
+  post("stop_poll");
+  x->polling = 0;
+}
+
 void padthink_free(t_padthink *x) {
   if (x->open_fds[0] != -1)
     close(x->open_fds[0]);
@@ -195,4 +224,6 @@ void padthink_setup(void) {
   class_addbang(padthink_class, padthink_bang);
 
   class_addmethod(padthink_class, (t_method)set_device, gensym("set"), A_DEFSYM,0);
+  class_addmethod(padthink_class, (t_method)start_poll, gensym("start"), A_DEFSYM, 0);
+  class_addmethod(padthink_class, (t_method)stop_poll, gensym("stop"), 0);
 }

@@ -1,0 +1,10 @@
+*.pd_linux
+*.o
+cache/
+.cache/
+.vscode/
+.ds_store
+*.log
+*.log.*
+
+
