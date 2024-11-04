@@ -12,9 +12,11 @@
 
 #include "m_pd.h"
 #include <fcntl.h>
+#include <pthread.h>
+
 #ifdef __linux__
-#include <linux/input.h>
-#include <unistd.h>
+  #include <linux/input.h>
+  #include <unistd.h>
 #endif
 
 // TODO
@@ -47,12 +49,12 @@ typedef struct _padthink {
   t_int         touchpad_fd;
 
   t_int         polling;
-
+  t_int         poll_interval;
   t_int         n_ret;
   t_int         t_ret;
   
   t_atom        nip_xy[2];
-  t_atom        a_bt[3];
+  t_atom        a_bt[4];
   t_atom        touchpad_xy[2];
 
   t_outlet      *out_nipple;
@@ -77,19 +79,22 @@ void padthink_read(t_padthink *x) {
 
 void padthink_bang(t_padthink *x) {
 
-  padthink_read(x);
+  // padthink_read(x);
 
   if (x->n_ret == -1 && x->t_ret == -1) {
     return;
   }
 
+  int buttons[4] = {0, 0, 0, 0};
+
   if (x->t_ret != -1) {
     if (tpad_ev.code == 54 && tpad_ev.type == 3) {
-      SETFLOAT(&x->touchpad_xy[0], tpad_ev.value);
-    } else if (tpad_ev.code == 53 && tpad_ev.type == 3){
       SETFLOAT(&x->touchpad_xy[1], tpad_ev.value);
+    } else if (tpad_ev.code == 53 && tpad_ev.type == 3){
+      SETFLOAT(&x->touchpad_xy[0], tpad_ev.value);
     } else if (tpad_ev.code == 0x110 && tpad_ev.type == 0x01) {
-      post("padtouch: Touchpad press %d", tpad_ev.value);
+      SETFLOAT(&x->a_bt[3], tpad_ev.value);
+      buttons[3] = tpad_ev.value;
     } 
     // post("Tp : %d %d %d", tpad_ev.type, tpad_ev.code, tpad_ev.value);
   }
@@ -105,7 +110,6 @@ void padthink_bang(t_padthink *x) {
     }
     // EV_KEY - mouse button event
     if (tpoint_ev.code == BTN_LEFT || tpoint_ev.code == BTN_RIGHT || tpoint_ev.code == BTN_MIDDLE) {
-      int buttons[3] = {0, 0, 0};
       if (tpoint_ev.code == BTN_LEFT) {
         buttons[0] = tpoint_ev.value;
       } else if (tpoint_ev.code == BTN_RIGHT) {
@@ -116,11 +120,12 @@ void padthink_bang(t_padthink *x) {
       SETFLOAT(&x->a_bt[0], buttons[0]);
       SETFLOAT(&x->a_bt[1], buttons[1]);
       SETFLOAT(&x->a_bt[2], buttons[2]);
+      SETFLOAT(&x->a_bt[3], buttons[3]);
     }
   }
 
   outlet_list(x->out_touchpad, &s_list, 2, x->touchpad_xy);
-  outlet_list(x->out_buttons, &s_list, 3, x->a_bt);
+  outlet_list(x->out_buttons, &s_list, 4, x->a_bt);
   outlet_list(x->out_nipple, &s_list, 2, x->nip_xy);
 }
 
@@ -131,6 +136,7 @@ static void init_atoms(t_padthink *x) {
   SETFLOAT(&x->a_bt[0], 0);
   SETFLOAT(&x->a_bt[1], 0);
   SETFLOAT(&x->a_bt[2], 0);
+  SETFLOAT(&x->a_bt[3], 0);
   SETFLOAT(&x->touchpad_xy[0], 0);
   SETFLOAT(&x->touchpad_xy[1], 0);
 }
@@ -167,6 +173,7 @@ void *padthink_new(void) {
   x->touchpad_fd = open(DEF_TOUCHPAD, O_RDONLY | O_NONBLOCK);
 
   x->polling = 1;
+  x->poll_interval = 10000; // 10ms
 
   x->open_fds[0] = -1;
   x->open_fds[1] = -1;
@@ -191,22 +198,34 @@ void *padthink_new(void) {
   x->out_touchpad = outlet_new(&x->x_obj, &s_list);
 
   inlet_new(&x->x_obj, &x->x_obj.ob_pd, &s_symbol, &s_symbol);
-  inlet_new(&x->x_obj, &x->x_obj.ob_pd, &s_bang, &s_bang);
+  inlet_new(&x->x_obj, &x->x_obj.ob_pd, &s_float, &s_float);
 
   return (void *)x;
 }
 
+
+void *polling_thread(void *arg) {
+  t_padthink *x = (t_padthink *)arg;
+  while (x->polling) {
+    padthink_read(x);
+    padthink_bang(x);
+    usleep(x->poll_interval); // Sleep for 10ms to prevent high CPU usage
+  }
+  return NULL;
+}
+
 void start_poll(t_padthink *x, t_symbol *s) {
-  post("start_poll");
   x->polling = 1;
-  // while (x->polling){
-  //   padthink_read(x);
-  //   padthink_bang(x);
-  // }
+  pthread_t thread_id;
+  pthread_create(&thread_id, NULL, polling_thread, (void *)x);
+  pthread_detach(thread_id);
+}
+
+void set_poll_sleep(t_padthink *x, t_floatarg f) {
+  x->poll_interval = f * 1000;
 }
 
 void stop_poll(t_padthink *x) {
-  post("stop_poll");
   x->polling = 0;
 }
 
@@ -217,13 +236,25 @@ void padthink_free(t_padthink *x) {
     close(x->open_fds[1]);
 }
 
+void padthink_turnon(t_padthink *x, t_floatarg f) {
+  if (f == 1) {
+    start_poll(x, NULL);
+  } else {
+    x->polling = 0;
+  }
+}
+
 void padthink_setup(void) {
   padthink_class = class_new(gensym("padthink"), (t_newmethod)padthink_new, (t_method)padthink_free,
                              sizeof(t_padthink), CLASS_DEFAULT, 0);
 
-  class_addbang(padthink_class, padthink_bang);
+  // add method for float input
+  class_addfloat(padthink_class, (t_method)padthink_turnon);
 
   class_addmethod(padthink_class, (t_method)set_device, gensym("set"), A_DEFSYM,0);
   class_addmethod(padthink_class, (t_method)start_poll, gensym("start"), A_DEFSYM, 0);
+  class_addmethod(padthink_class, (t_method)set_poll_sleep, gensym("poll"), A_DEFFLOAT, 0);
   class_addmethod(padthink_class, (t_method)stop_poll, gensym("stop"), 0);
+
+  class_sethelpsymbol(padthink_class, gensym("padthink-help"));
 }
