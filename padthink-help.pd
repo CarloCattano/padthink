@@ -1,0 +1,18 @@
+#N canvas 1064 58 840 1092 12;
+#X obj 35 138 padthink;
+#X obj 31 49 bng 20 250 50 0 empty empty empty 0 -10 0 12 #fcfcfc #000000 #000000;
+#X obj 122 211 unpack f f;
+#X floatatom 122 236 5 0 0 0 - - - 0;
+#X floatatom 189 243 5 0 0 0 - - - 0;
+#X obj 119 61 tgl 20 0 empty empty empty 0 -10 0 12 #fcfcfc #000000 #000000 0 1;
+#X obj 107 101 metro 10;
+#X obj 190 122 print;
+#X floatatom 38 175 5 0 0 0 - - - 0;
+#X connect 0 0 8 0;
+#X connect 0 2 2 0;
+#X connect 0 2 7 0;
+#X connect 1 0 0 0;
+#X connect 2 0 3 0;
+#X connect 2 1 4 0;
+#X connect 5 0 6 0;
+#X connect 6 0 1 0;
