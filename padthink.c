@@ -12,7 +12,6 @@
 
 #include "m_pd.h"
 #include <fcntl.h>
-#include <pthread.h>
 
 #ifdef __linux__
   #include <linux/input.h>
@@ -33,6 +32,8 @@
 #define DEF_TOUCHPAD                                                           \
   "/dev/input/by-path/pci-0000:00:15.0-platform-i2c_designware.0-event-mouse"
 #endif
+
+
 
 static t_class *padthink_class;
 
@@ -56,7 +57,7 @@ typedef struct _padthink {
   t_int n_ret;
   t_int t_ret;
 
-  pthread_t thread_id;
+  t_clock *x_clock;
 
   // poll fd strucst
   struct pollfd poll_fds[2];
@@ -71,11 +72,8 @@ typedef struct _padthink {
 
 } t_padthink;
 
-static t_int last_nip[2] = {0, 0};
-static t_int last_tp[2] = {0, 0};
-static t_int last_bt[4] = {0, 0, 0, 0};
 
-void debug_all(t_padthink *x);
+void padthink_poll_callback(t_padthink *x);
 
 // TODO: implement smoothing from sampling
 //       values between readings offset
@@ -84,53 +82,35 @@ void padthink_process(t_padthink *x) {
 
   int buttons[4] = {0, 0, 0, 0};
 
-  static int sample_count = 0;
 
-  if (x->t_ret != -1) {
+  if (x->t_ret != -1) 
+  {
     if (tpad_ev.code == 54 && tpad_ev.type == 3) {
       SETFLOAT(&x->touchpad_xy[1], tpad_ev.value);
-      if (x->touchpad_xy[1].a_w.w_float != last_tp[1] &&
-          sample_count % SMOOTH == 0) {
-        if (sample_count % 10 == 0) {
-          outlet_list(x->out_touchpad, &s_list, 2, x->touchpad_xy);
-          last_tp[1] = x->touchpad_xy[1].a_w.w_float;
-        }
-      }
-    } else if (tpad_ev.code == 53 && tpad_ev.type == 3) {
+    } 
+    if (tpad_ev.code == 53 && tpad_ev.type == 3) {
       SETFLOAT(&x->touchpad_xy[0], tpad_ev.value);
-      if (x->touchpad_xy[0].a_w.w_float != last_tp[0] &&
-          sample_count % SMOOTH == 0) {
-        outlet_list(x->out_touchpad, &s_list, 2, x->touchpad_xy);
-        last_tp[0] = x->touchpad_xy[0].a_w.w_float;
-      }
-    } else if (tpad_ev.code == 0x110 && tpad_ev.type == 0x01) {
+    } 
+    
+    if (tpad_ev.code == 0x110 && tpad_ev.type == 0x01) {
       SETFLOAT(&x->a_bt[3], tpad_ev.value);
       buttons[3] = tpad_ev.value;
     }
   }
-
   if (x->n_ret) {
     // EV_REL - trackpoint relative movement
     if (tpoint_ev.type == EV_REL) {
       if (tpoint_ev.code == 1) {
         SETFLOAT(&x->nip_xy[0], tpoint_ev.value);
-        if (x->nip_xy[0].a_w.w_float != last_nip[0] &&
-            sample_count % SMOOTH == 0) {
-          outlet_list(x->out_nipple, &s_list, 2, x->nip_xy);
-          last_nip[0] = x->nip_xy[0].a_w.w_float;
         }
-      } else if (tpoint_ev.code == 0) {
+      if (tpoint_ev.code == 0) {
         SETFLOAT(&x->nip_xy[1], tpoint_ev.value);
-        if (x->nip_xy[1].a_w.w_float != last_nip[1] &&
-            sample_count % SMOOTH == 0) {
-          outlet_list(x->out_nipple, &s_list, 2, x->nip_xy);
-          last_nip[1] = x->nip_xy[1].a_w.w_float;
-        }
       }
     }
     // EV_KEY - mouse button event
     if (tpoint_ev.code == BTN_LEFT || tpoint_ev.code == BTN_RIGHT ||
-        tpoint_ev.code == BTN_MIDDLE) {
+        tpoint_ev.code == BTN_MIDDLE) 
+    {
       if (tpoint_ev.code == BTN_LEFT) {
         buttons[0] = tpoint_ev.value;
       } else if (tpoint_ev.code == BTN_RIGHT) {
@@ -138,26 +118,16 @@ void padthink_process(t_padthink *x) {
       } else if (tpoint_ev.code == BTN_MIDDLE) {
         buttons[2] = tpoint_ev.value;
       }
-
       SETFLOAT(&x->a_bt[0], buttons[0]);
       SETFLOAT(&x->a_bt[1], buttons[1]);
       SETFLOAT(&x->a_bt[2], buttons[2]);
       SETFLOAT(&x->a_bt[3], buttons[3]);
-
-      if (x->a_bt[0].a_w.w_float != last_bt[0] ||
-          x->a_bt[1].a_w.w_float != last_bt[1] ||
-          x->a_bt[2].a_w.w_float != last_bt[2] ||
-          x->a_bt[3].a_w.w_float != last_bt[3]) {
-        outlet_list(x->out_buttons, &s_list, 4, x->a_bt);
-        last_bt[0] = x->a_bt[0].a_w.w_float;
-        last_bt[1] = x->a_bt[1].a_w.w_float;
-        last_bt[2] = x->a_bt[2].a_w.w_float;
-        last_bt[3] = x->a_bt[3].a_w.w_float;
-      }
     }
-  }
+  }    
 
-  sample_count > 1024 ? sample_count = 0 : sample_count++;
+  outlet_list(x->out_buttons, &s_list, 4, x->a_bt);
+  outlet_list(x->out_touchpad, &s_list, 2, x->touchpad_xy);
+  outlet_list(x->out_nipple, &s_list, 2, x->nip_xy);
 }
 static void init_atoms(t_padthink *x) {
   SETFLOAT(&x->nip_xy[0], 0);
@@ -175,13 +145,13 @@ static void init_atoms(t_padthink *x) {
 void set_touchpad_device(t_padthink *x, t_symbol *s) {
 
   close(x->open_fds[1]);
-  x->touchpad_fd = open(s->s_name, O_RDONLY | O_NONBLOCK);
+  x->touchpad_fd = open(s->s_name, O_RDONLY );
 
   if (x->touchpad_fd == -1) {
     post("Error: Cannot open given device");
     post("Using default device");
 
-    x->touchpad_fd = open(DEF_TOUCHPAD, O_RDONLY | O_NONBLOCK);
+    x->touchpad_fd = open(DEF_TOUCHPAD, O_RDONLY );
     if (x->touchpad_fd == -1) {
       post("Error: Cannot open default device");
       return;
@@ -221,10 +191,10 @@ void *padthink_new(void) {
   x->nipple_fd = open(DEFAULT_DEVICE, O_RDONLY | O_NONBLOCK);
   x->touchpad_fd = open(DEF_TOUCHPAD, O_RDONLY | O_NONBLOCK);
 
-  x->polling = 1;
-  x->poll_interval = 10000; // 1000  1ms
+  x->polling = 0;
+  x->poll_interval = 2; // 2 ? whats the unit in pd t_clock ? 
 
-  x->thread_id = 0;
+  x->x_clock = clock_new(x, (t_method)padthink_poll_callback);
 
   x->open_fds[0] = -1;
   x->open_fds[1] = -1;
@@ -251,31 +221,53 @@ void *padthink_new(void) {
   return (void *)x;
 }
 
-void *polling_thread(void *arg) {
-  t_padthink *x = (t_padthink *)arg;
-  while (x->polling) {
-    x->poll_fds[0].fd = x->open_fds[0];
-    x->poll_fds[0].events = POLLIN;
-    x->poll_fds[1].fd = x->open_fds[1];
-    x->poll_fds[1].events = POLLIN;
-
-    if (poll(x->poll_fds, 2, -1) > 0) {//x->poll_interval) > 0) {
-      if (x->poll_fds[0].revents & POLLIN) {
-        x->n_ret = read(x->open_fds[0], &tpoint_ev, sizeof(struct input_event));
-      }
-      if (x->poll_fds[1].revents & POLLIN) {
-        x->t_ret = read(x->open_fds[1], &tpad_ev, sizeof(struct input_event));
-      }
-      padthink_process(x);
-    }
+void padthink_poll(t_padthink *x) {
+  x->poll_fds[0].fd = x->open_fds[0];
+  x->poll_fds[0].events = POLLIN;
+  x->poll_fds[1].fd = x->open_fds[1];
+  x->poll_fds[1].events = POLLIN;
+  
+  if (x->open_fds[0] == -1 || x->open_fds[1] == -1) {
+    post("Error: Invalid file descriptors for polling.");
+    return;
   }
-  pthread_exit(NULL); // exit thread when polling is stopped
+
+  int ret = poll(x->poll_fds, 2, 0);
+  if (ret == -1 || ret == 0)
+      return;
+
+  if (x->poll_fds[0].revents & POLLIN) {
+      x->n_ret = read(x->open_fds[0], &tpoint_ev, sizeof(tpoint_ev));
+      if (x->n_ret == -1) {
+          perror("Read error from trackpoint");
+      } else if (x->n_ret == sizeof(tpoint_ev)) {
+          padthink_process(x);
+      }
+  }
+  if (x->poll_fds[1].revents & POLLIN) {
+      x->t_ret = read(x->open_fds[1], &tpad_ev, sizeof(tpad_ev));
+      if (x->t_ret == -1) {
+          perror("Read error from touchpad");
+      } else if (x->t_ret == sizeof(tpad_ev)) {
+          padthink_process(x);
+      }
+  }
 }
 
+void padthink_poll_callback(t_padthink *x) {
+  padthink_poll(x);
+
+  if (x->polling) {
+    clock_delay(x->x_clock, x->poll_interval);
+  }
+}
+
+
 void start_poll(t_padthink *x) {
-  x->polling = 1;
-  pthread_create(&x->thread_id, NULL, polling_thread, (void *)x);
-  pthread_detach(x->thread_id); // detach thread to avoid memory leak
+  if (!x->polling) {
+    x->polling = 1;
+    clock_delay(x->x_clock, 0);
+  }
 }
 
 void set_poll_sleep(t_padthink *x, t_floatarg f) {
@@ -283,8 +275,10 @@ void set_poll_sleep(t_padthink *x, t_floatarg f) {
 }
 
 void stop_poll(t_padthink *x) {
-  x->polling = 0;
-  pthread_cancel(x->thread_id);
+  if (x->polling) {
+    x->polling = 0;
+    clock_unset(x->x_clock);  // Stop the clock
+  }
 }
 
 void padthink_free(t_padthink *x) {
@@ -300,7 +294,9 @@ void padthink_free(t_padthink *x) {
     stop_poll(x);
   }
 
-  pthread_detach(x->thread_id); 
+  if (x->x_clock) {
+    clock_free(x->x_clock);
+  }
 }
 
 void padthink_turn_on(t_padthink *x, t_floatarg f) {
