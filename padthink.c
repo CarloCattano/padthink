@@ -28,12 +28,17 @@
 // or make the user a member of the input group
 
 #ifdef THINKPAD
-#define DEFAULT_DEVICE "/dev/input/by-path/platform-i8042-serio-1-event-mouse"
-#define DEF_TOUCHPAD                                                           \
-  "/dev/input/by-path/pci-0000:00:15.0-platform-i2c_designware.0-event-mouse"
+// #define DEFAULT_DEVICE "/dev/input/by-path/platform-i8042-serio-1-event-mouse"
+#define DEFAULT_DEVICE "/dev/input/event7"
+#define DEF_TOUCHPAD "/dev/input/event9"
 #endif
 
-
+int fingers[4][2] = {
+    {330, 1}, // finger 1
+    {333, 1}, // finger 2
+    {334, 1}, // finger 3
+    {335, 1}, // finger 4
+};
 
 static t_class *padthink_class;
 
@@ -65,14 +70,18 @@ typedef struct _padthink {
   t_atom    nip_xy[2];
   t_atom    a_bt[4];
   t_atom    touchpad_xy[2];
+  t_atom    fingers;
 
   t_atom    prev_nip_xy[2];
   t_atom    prev_a_bt[4];
   t_atom    prev_touchpad_xy[2];
+  t_atom    prev_fingers;
+
 
   t_outlet  *out_nipple;
   t_outlet  *out_buttons;
   t_outlet  *out_touchpad;
+  t_outlet  *out_fingers;
 
 }           t_padthink;
 
@@ -96,13 +105,19 @@ static void init_atoms(t_padthink *x) {
   for (int i = 0; i < 4; i++) {
       SETFLOAT(&x->prev_a_bt[i], 0);
   }
+
+  SETFLOAT(&x->fingers, 0);
+  SETFLOAT(&x->prev_fingers, 0);
 }
 
-
-// TODO: implement smoothing from sampling
-//       values between readings in the trackpoint since it is very sensitive and jumpy
-
-
+/** 
+ * @brief Send a list of floats to the outlet if the values have changed
+ * 
+ * @param outlet 
+ * @param current 
+ * @param previous 
+ * @param size 
+ */
 void send_if_changed(t_outlet *outlet, t_atom *current, t_atom *previous, int size) {
     int changed = 0;
     for (int i = 0; i < size; i++) {
@@ -117,6 +132,26 @@ void send_if_changed(t_outlet *outlet, t_atom *current, t_atom *previous, int si
         }
         outlet_list(outlet, &s_list, size, current);
     }
+}
+
+
+int check_fingers(t_padthink *x) {
+  static int fingers_count = 0;
+  int size = sizeof(fingers) / sizeof(fingers[0]);
+  for (int i = size - 1; i >= 0; i--)
+  {
+    if (fingers[i][0] == tpad_ev.code && fingers[i][1] == tpad_ev.type)
+    {
+      if (tpad_ev.value == 1) {
+        fingers_count = i + 1;
+        break;
+      }
+      if (i == 0) 
+        fingers_count = 0;
+    }
+  }
+  SETFLOAT(&x->fingers, fingers_count);
+  return fingers_count;
 }
 
 void padthink_process(t_padthink *x) {
@@ -134,7 +169,9 @@ void padthink_process(t_padthink *x) {
     SETFLOAT(&x->a_bt[3], tpad_ev.value);
     buttons[3] = tpad_ev.value;
   }
-
+  
+  check_fingers(x);
+  
   // EV_REL - trackpoint relative movement
   if (tpoint_ev.type == EV_REL) {
     if (tpoint_ev.code == 1) {
@@ -164,7 +201,9 @@ void padthink_process(t_padthink *x) {
   send_if_changed(x->out_buttons, x->a_bt, x->prev_a_bt, 4);
   send_if_changed(x->out_nipple, x->nip_xy, x->prev_nip_xy, 2);
   send_if_changed(x->out_touchpad, x->touchpad_xy, x->prev_touchpad_xy, 2);
+  send_if_changed(x->out_fingers, &x->fingers, &x->prev_fingers, 1);
 }
+
 
 void set_touchpad_device(t_padthink *x, t_symbol *s) {
 
@@ -245,6 +284,7 @@ void *padthink_new(void) {
   x->out_nipple = outlet_new(&x->x_obj, &s_list);
   x->out_buttons = outlet_new(&x->x_obj, &s_list);
   x->out_touchpad = outlet_new(&x->x_obj, &s_list);
+  x->out_fingers = outlet_new(&x->x_obj, &s_list);
 
   return (void *)x;
 }
@@ -286,7 +326,6 @@ void padthink_poll_callback(t_padthink *x) {
     clock_delay(x->x_clock, x->poll_interval);
   }
 }
-
 
 void start_poll(t_padthink *x) {
   if (!x->polling) {

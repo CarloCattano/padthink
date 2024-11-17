@@ -50,12 +50,16 @@ void fingers_down(input_event ev) {
       if (ev.value == 1) {
         fingers_count = i + 1;
         std::cout << i + 1 << " down" << std::endl;
+        std::cout << " -- FULL CODE    -- " << ev.code << " " << ev.type << " "
+                  << ev.value << std::endl;
         break;
       }
       // no fingers down
       if (i == 0) {
         fingers_count = 0;
         std::cout << "0 fingers down" << std::endl;
+        std::cout << " -- FULL CODE    -- " << ev.code << " " << ev.type << " "
+                  << ev.value << std::endl;
       }
     }
   }

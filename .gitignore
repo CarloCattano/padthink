@@ -6,5 +6,11 @@ cache/
 .ds_store
 *.log
 *.log.*
+a.out
 
+# swap files
+*.swp
+*.swo
+compile_commands.json
+tags
 
