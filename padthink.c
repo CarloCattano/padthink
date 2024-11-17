@@ -1,13 +1,7 @@
 /* ************************************************************************** */
-/*                                                                            */
-/*                                                        :::      ::::::::   */
-/*   padthink.c                                         :+:      :+:    :+:   */
-/*                                                    +:+ +:+         +:+     */
-/*   By: carlo                                      +#+  +:+       +#+        */
-/*                                                +#+#+#+#+#+   +#+           */
-/*   Created: 2024/11/02 19:20:07 by carlo             #+#    #+#             */
-/*   Updated: 2024/11/04 12:25:11 by carlo            ###   ########.fr       */
-/*                                                                            */
+/*   padthink.c                                         :+:      : :    :+:   */
+/*                                                    + + + + + +   + +       */
+/*   Updated: 2024/11/15 12:25:11 by cc               ###   ########.         */
 /* ************************************************************************** */
 
 #include "m_pd.h"
@@ -19,19 +13,21 @@
   #include <unistd.h>
 #endif
 
+// TODO: Allow non thinkpad users to use the touchpad and buttons
 #define THINKPAD
 
-#define SMOOTH 10
+/* needs chmod to read permission on *device file
+   sudo chmod 444 /dev/input/by-path/platform-i8042-serio-1-event-mouse
+   or make the user a member of the input group
+*/
 
-// needs chmod to read permission on *device file
-// sudo chmod 444 /dev/input/by-path/platform-i8042-serio-1-event-mouse
-// or make the user a member of the input group
-
+// Thinkpad trackpoint
 #ifdef THINKPAD
-// #define DEFAULT_DEVICE "/dev/input/by-path/platform-i8042-serio-1-event-mouse"
 #define DEFAULT_DEVICE "/dev/input/event7"
-#define DEF_TOUCHPAD "/dev/input/event9"
 #endif
+
+// Trackpad
+#define DEF_TOUCHPAD "/dev/input/event9"
 
 int fingers[4][2] = {
     {330, 1}, // finger 1
@@ -49,8 +45,8 @@ static t_class *padthink_class;
 
 char *device;
 
-typedef struct _padthink {
-
+typedef struct _padthink
+{
   t_object x_obj;
 
   t_int open_fds[2];
@@ -368,21 +364,16 @@ void padthink_turn_on(t_padthink *x, t_floatarg f) {
 }
 
 void padthink_setup(void) {
-  padthink_class =
-      class_new(gensym("padthink"), (t_newmethod)padthink_new,
-                (t_method)padthink_free, sizeof(t_padthink), CLASS_DEFAULT, 0);
+  padthink_class = class_new(gensym("padthink"), (t_newmethod)padthink_new,
+                    (t_method)padthink_free, sizeof(t_padthink), CLASS_DEFAULT, 0);
 
   class_addfloat(padthink_class, (t_method)padthink_turn_on);
 
-  class_addmethod(padthink_class, (t_method)set_touchpad_device,
-                  gensym("touchpad"), A_DEFSYM, 0);
-  class_addmethod(padthink_class, (t_method)set_trackpoint_device,
-                  gensym("trackpoint"), A_DEFSYM, 0);
-  class_addmethod(padthink_class, (t_method)start_poll, gensym("start"),
-                  A_DEFSYM, 0);
-  class_addmethod(padthink_class, (t_method)set_poll_sleep, gensym("poll"),
-                  A_DEFFLOAT, 0);
+  class_addmethod(padthink_class, (t_method)set_touchpad_device, gensym("touchpad"), A_DEFSYM, 0);
+  class_addmethod(padthink_class, (t_method)set_trackpoint_device, gensym("trackpoint"), A_DEFSYM, 0);
+  class_addmethod(padthink_class, (t_method)start_poll, gensym("start"), A_DEFSYM, 0);
+  class_addmethod(padthink_class, (t_method)set_poll_sleep, gensym("poll"), A_DEFFLOAT, 0);
   class_addmethod(padthink_class, (t_method)stop_poll, gensym("stop"), 0);
-
+  
   class_sethelpsymbol(padthink_class, gensym("padthink-help"));
 }
